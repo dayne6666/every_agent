@@ -6,7 +6,7 @@
 import json
 import time
 import threading
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
@@ -14,6 +14,7 @@ from opensandbox import SandboxSync
 from opensandbox.config import ConnectionConfigSync
 
 from sandbox.opensandbox_opt import create_sandbox, connect_sandbox, verify_sandbox
+from common.config import SANDBOX_TIMEOUT_MINUTES
 
 
 class SandboxManager:
@@ -101,19 +102,18 @@ class SandboxManager:
         print(f"[INFO] 💓 心跳保活已启动，间隔: {self.heartbeat_interval}秒")
 
     def _heartbeat_loop(self):
-        """心跳循环"""
+        """心跳循环 - 通过 renew API 续期沙箱"""
         while self._heartbeat_running and self._sandbox:
             try:
-                # 发送心跳命令
-                result = self._sandbox.commands.run("echo heartbeat")
-                if result.exit_code == 0:
-                    print(f"[KeepAlive] 💓 心跳成功 @ {time.strftime('%H:%M:%S')}")
-                    # 更新最后使用时间
-                    self._update_last_used()
-                else:
-                    print(f"[KeepAlive] ⚠️ 心跳失败，退出码: {result.exit_code}")
+                # 使用 renew API 续期沙箱
+                timeout = timedelta(minutes=SANDBOX_TIMEOUT_MINUTES)
+                response = self._sandbox.renew(timeout)
+                print(f"[KeepAlive] 💓 心跳续期成功 @ {time.strftime('%H:%M:%S')}")
+                print(f"[KeepAlive] 📅 新过期时间: {response.expires_at}")
+                # 更新最后使用时间
+                self._update_last_used()
             except Exception as e:
-                print(f"[KeepAlive] ❌ 心跳异常: {e}")
+                print(f"[KeepAlive] ❌ 心跳续期失败: {e}")
 
             # 等待下次心跳
             time.sleep(self.heartbeat_interval)

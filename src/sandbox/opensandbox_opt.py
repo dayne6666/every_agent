@@ -7,6 +7,8 @@ import httpx
 from opensandbox import SandboxSync
 from opensandbox.config import ConnectionConfigSync
 
+from common.config import SANDBOX_TIMEOUT_MINUTES
+
 
 # 默认沙箱镜像
 DEFAULT_SANDBOX_IMAGE = "sandbox-registry.cn-zhangjiakou.cr.aliyuncs.com/opensandbox/code-interpreter:v1.0.2"
@@ -32,7 +34,7 @@ def create_sandbox(config: ConnectionConfigSync, image: Optional[str] = None) ->
         entrypoint=["/opt/opensandbox/code-interpreter.sh"],
         env={"PYTHON_VERSION": "3.11"},
         resource={"memory": "4Gi"},
-        timeout=timedelta(minutes=30),
+        timeout=timedelta(minutes=SANDBOX_TIMEOUT_MINUTES),
         connection_config=config,
     )
     print(f"[INFO] 成功创建新沙箱，ID: {sandbox.id}")

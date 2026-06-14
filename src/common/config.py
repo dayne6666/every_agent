@@ -72,6 +72,8 @@ SANDBOX_CONFIG = ConnectionConfigSync(
     request_timeout=timedelta(seconds=60),
     transport=httpx.HTTPTransport(limits=httpx.Limits(max_connections=20)),
 )
+# 沙箱超时时间（分钟）- 创建和续期都使用此值
+SANDBOX_TIMEOUT_MINUTES = 30
 
 # ---------- 路径常量 ----------
 EXAMPLE_DIR = Path(__file__).parent.parent
