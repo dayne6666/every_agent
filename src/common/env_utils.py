@@ -1,0 +1,33 @@
+import os
+
+from dotenv import load_dotenv
+
+load_dotenv(override=True)
+
+OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
+DEEPSEEK_API_KEY = os.getenv('DEEPSEEK_API_KEY')
+ZHIPU_API_KEY = os.getenv('ZHIPU_API_KEY')
+MINIMAX_API_KEY = os.getenv('MINIMAX_API_KEY')
+ALIBABA_API_KEY = os.getenv('ALIBABA_API_KEY')
+K2_API_KEY = os.getenv('K2_API_KEY')
+
+K2_BASE_URL = os.getenv('K2_BASE_URL')
+ALIBABA_BASE_URL = os.getenv('ALIBABA_BASE_URL')
+MINIMAX_BASE_URL = os.getenv('MINIMAX_BASE_URL')
+OPENAI_BASE_URL = os.getenv('OPENAI_BASE_URL')
+DEEPSEEK_BASE_URL = os.getenv('DEEPSEEK_BASE_URL')
+ZHIPU_BASE_URL = os.getenv('ZHIPU_BASE_URL')
+
+LOCAL_BASE_URL = os.getenv('LOCAL_BASE_URL')
+DAYTONA_API_KEY = os.getenv('DAYTONA_API_KEY')
+DAYTONA_BASE_URL = os.getenv('DAYTONA_BASE_URL')
+
+# 加载小米环境变量
+XIAOMI_API_KEY = os.getenv("XIAOMI_API_KEY")
+XIAOMI_BASE_URL = os.getenv("XIAOMI_BASE_URL")
+
+# 七牛云配置
+QINIU_ACCESS_KEY = os.getenv("QINIU_ACCESS_KEY")
+QINIU_SECRET_KEY = os.getenv("QINIU_SECRET_KEY")
+QINIU_BUCKET_NAME = os.getenv("QINIU_BUCKET_NAME")
+QINIU_BUCKET_DOMAIN = os.getenv("QINIU_BUCKET_DOMAIN")
