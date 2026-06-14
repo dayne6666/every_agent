@@ -2,7 +2,9 @@ import asyncio
 
 from deepagents import create_deep_agent
 
-from common.config import llm_xiaomi, AGENTS_MD_FILENAME, SANDBOX_CONFIG, LOCAL_SKILLS_DIR, SANDBOX_SKILLS_ROOT
+from agent.memory.prompts import system_prompt
+from common.config import llm_xiaomi, AGENTS_MD_FILENAME, SANDBOX_CONFIG, LOCAL_SKILLS_DIR, SANDBOX_SKILLS_ROOT, \
+    LOCAL_AGENTS_MD
 from sandbox.custom_opensandbox import OpenSandboxBackend
 from sandbox.sandbox_manager import SandboxManager
 from sandbox.opensandbox_opt import sync_skills_to_sandbox
@@ -35,11 +37,11 @@ async def crete():
     # 智能同步技能到沙箱
     uploaded_count = sync_skills_to_sandbox(agent_state.sandbox_backend, local_skills_path, sandbox_skills_path)
 
-    # with open(str(LOCAL_AGENTS_MD), 'r', encoding='utf-8') as f:
-    #     content = f.read()
-    #
-    # # 上传到沙箱
-    # result = sandbox_backend.upload_files([(AGENTS_MD_FILENAME, content.encode("utf-8"))])
+    with open(str(LOCAL_AGENTS_MD), 'r', encoding='utf-8') as f:
+        content = f.read()
+
+    # 上传到沙箱
+    result = agent_state.sandbox_backend.upload_files([(AGENTS_MD_FILENAME, content.encode("utf-8"))])
 
     if uploaded_count > 0:
         print(f"✅ 成功上传了 {uploaded_count} 个新技能到沙箱")
@@ -52,6 +54,7 @@ async def crete():
         tools=[web_search, upload_to_qiniu],
         skills=["/skills/main/"],
         backend=agent_state.sandbox_backend,
+        system_prompt=system_prompt,
     )
 
 
