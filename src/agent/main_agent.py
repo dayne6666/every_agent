@@ -7,24 +7,25 @@ from sandbox.custom_opensandbox import OpenSandboxBackend
 from sandbox.sandbox_manager import SandboxManager
 from sandbox.opensandbox_opt import sync_skills_to_sandbox
 from tools.my_tools import web_search, upload_to_qiniu
+from agent.agent_state import sandbox_backend as _sb, sandbox_manager as _sm
 
-sandbox_backend = None
-sandbox_manager = None
+sandbox_backend = _sb
+sandbox_manager = _sm
 
 
 async def crete():
-    global sandbox_manager
+    from agent import agent_state
 
     # 使用沙箱管理器获取沙箱（自动复用旧沙箱，失败则创建新的）
-    sandbox_manager = SandboxManager(
+    agent_state.sandbox_manager = SandboxManager(
         config=SANDBOX_CONFIG,
         state_file=".sandbox_state.json",
-        heartbeat_interval=240,  # 心跳间隔 4 分钟
+        heartbeat_interval=240,
     )
-    sandbox = sandbox_manager.get_sandbox()
+    sandbox = agent_state.sandbox_manager.get_sandbox()
 
     # 创建OpenSandbox后端，用于文件上传、命令执行等操作
-    sandbox_backend = OpenSandboxBackend(sandbox=sandbox)
+    agent_state.sandbox_backend = OpenSandboxBackend(sandbox=sandbox)
     # 本地技能目录
     local_skills_path = str(LOCAL_SKILLS_DIR)
 
@@ -32,7 +33,7 @@ async def crete():
     sandbox_skills_path = SANDBOX_SKILLS_ROOT
 
     # 智能同步技能到沙箱
-    uploaded_count = sync_skills_to_sandbox(sandbox_backend, local_skills_path, sandbox_skills_path)
+    uploaded_count = sync_skills_to_sandbox(agent_state.sandbox_backend, local_skills_path, sandbox_skills_path)
 
     # with open(str(LOCAL_AGENTS_MD), 'r', encoding='utf-8') as f:
     #     content = f.read()
@@ -50,7 +51,7 @@ async def crete():
         memory=[AGENTS_MD_FILENAME],  # 由MemoryMiddleware加载, 主Agent的系统提示词
         tools=[web_search, upload_to_qiniu],
         skills=["/skills/main/"],
-        backend=sandbox_backend,
+        backend=agent_state.sandbox_backend,
     )
 
 

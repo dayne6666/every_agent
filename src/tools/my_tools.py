@@ -53,7 +53,7 @@ def upload_to_qiniu(local_path: str) -> str:
         return "错误：七牛云配置不完整，请检查 .env 中的 QINIU_ACCESS_KEY、QINIU_SECRET_KEY、QINIU_BUCKET_NAME、QINIU_BUCKET_DOMAIN"
 
     # 延迟导入避免循环依赖
-    from agent.main_agent import sandbox_backend
+    from agent.agent_state import sandbox_backend
 
     if sandbox_backend is None:
         return "错误：沙箱未连接，无法读取文件"
