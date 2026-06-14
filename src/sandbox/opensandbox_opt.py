@@ -1,37 +1,29 @@
 import os
 from datetime import timedelta
+from typing import Optional
 
 import httpx
 from opensandbox import SandboxSync
 from opensandbox.config import ConnectionConfigSync
-from opensandbox.models import NetworkPolicy, NetworkRule
 
 
-def get_or_create_sandbox(config, sandbox_id=None, image=None):
+# 默认沙箱镜像
+DEFAULT_SANDBOX_IMAGE = "sandbox-registry.cn-zhangjiakou.cr.aliyuncs.com/opensandbox/code-interpreter:v1.0.2"
+
+
+def create_sandbox(config: ConnectionConfigSync, image: Optional[str] = None) -> SandboxSync:
     """
-    获取或创建沙箱
+    创建新沙箱
 
     Args:
         config: ConnectionConfigSync 配置
-        sandbox_id: 可选，要连接的现有沙箱ID
-        image: 可选，创建新沙箱时使用的镜像
+        image: 沙箱镜像（可选，默认使用 DEFAULT_SANDBOX_IMAGE）
 
     Returns:
         SandboxSync 实例
     """
-    if sandbox_id:
-        # 连接到现有沙箱
-        print(f"[INFO] 正在连接到现有沙箱: {sandbox_id}")
-        try:
-            sandbox = SandboxSync.connect(sandbox_id, connection_config=config)
-            print(f"[INFO] 成功连接到沙箱: {sandbox_id}")
-            return sandbox
-        except Exception as e:
-            print(f"[WARNING] 连接沙箱失败: {e}，将创建新沙箱")
-
-    # 如果没有提供sandbox_id或连接失败，创建新沙箱
     if not image:
-        image = "sandbox-registry.cn-zhangjiakou.cr.aliyuncs.com/opensandbox/code-interpreter:v1.0.2"
+        image = DEFAULT_SANDBOX_IMAGE
 
     print(f"[INFO] 正在创建新沙箱，使用镜像: {image}")
     sandbox = SandboxSync.create(
@@ -39,65 +31,49 @@ def get_or_create_sandbox(config, sandbox_id=None, image=None):
         entrypoint=["/opt/opensandbox/code-interpreter.sh"],
         env={"PYTHON_VERSION": "3.11"},
         resource={"memory": "4Gi"},
-        timeout=timedelta(minutes=30),  # 沙箱的空闲超时时间
+        timeout=timedelta(minutes=30),
         connection_config=config,
-        # network_policy=NetworkPolicy(  # 沙箱网络路由限制策略
-        #     defaultAction="deny",
-        #     egress=[
-        #         NetworkRule(action="allow", target="pypi.org"),
-        #         NetworkRule(action="allow", target="*.github.com"),
-        #     ]
-        # )
     )
     print(f"[INFO] 成功创建新沙箱，ID: {sandbox.id}")
     return sandbox
 
 
-def list_running_sandboxes(config):
+def connect_sandbox(sandbox_id: str, config: ConnectionConfigSync) -> Optional[SandboxSync]:
     """
-    列出所有正在运行的沙箱
+    连接到现有沙箱
 
     Args:
+        sandbox_id: 沙箱 ID
         config: ConnectionConfigSync 配置
 
     Returns:
-        list: 正在运行的沙箱列表
+        SandboxSync 实例，连接失败返回 None
     """
     try:
-        # 注意：根据OpenSandbox API，可能需要使用不同的方法列出沙箱
-        # 这里假设有list方法，实际可能需要查看OpenSandbox文档
-        print("[INFO] 正在列出运行中的沙箱...")
-
-        # 方法1：尝试使用list方法（如果存在）
-        try:
-            sandboxes = SandboxSync.list(connection_config=config)
-            running_sandboxes = []
-
-            # 遍历分页器获取所有沙箱
-            paginator = sandboxes
-            while True:
-                items = paginator.next_items()
-                if not items:
-                    break
-                for sandbox in items:
-                    # 检查沙箱状态，这里假设有state属性
-                    if hasattr(sandbox, 'state') and sandbox.state == 'running':
-                        running_sandboxes.append(sandbox)
-                    elif not hasattr(sandbox, 'state'):
-                        # 如果没有state属性，假设都在运行
-                        running_sandboxes.append(sandbox)
-
-            print(f"[INFO] 找到 {len(running_sandboxes)} 个运行中的沙箱")
-            return running_sandboxes
-
-        except AttributeError:
-            # 如果list方法不存在，尝试其他方式
-            print("[WARNING] SandboxSync.list() 方法不存在，无法列出沙箱")
-            return []
-
+        print(f"[INFO] 正在连接到沙箱: {sandbox_id}")
+        sandbox = SandboxSync.connect(sandbox_id, connection_config=config)
+        print(f"[INFO] 成功连接到沙箱: {sandbox_id}")
+        return sandbox
     except Exception as e:
-        print(f"[ERROR] 列出沙箱时出错: {e}")
-        return []
+        print(f"[WARNING] 连接沙箱 {sandbox_id} 失败: {e}")
+        return None
+
+
+def verify_sandbox(sandbox: SandboxSync) -> bool:
+    """
+    验证沙箱是否可用
+
+    Args:
+        sandbox: SandboxSync 实例
+
+    Returns:
+        bool: 沙箱是否可用
+    """
+    try:
+        result = sandbox.commands.run("echo test")
+        return result.exit_code == 0
+    except Exception:
+        return False
 
 
 def sync_skills_to_sandbox(backend, local_skills_path, sandbox_skills_path):

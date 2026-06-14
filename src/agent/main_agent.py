@@ -2,19 +2,26 @@ import asyncio
 
 from deepagents import create_deep_agent
 
-from common.config import llm_xiaomi, AGENTS_MD_FILENAME, SANDBOX_CONFIG, LOCAL_SKILLS_DIR, SANDBOX_SKILLS_ROOT, \
-    LOCAL_AGENTS_MD
+from common.config import llm_xiaomi, AGENTS_MD_FILENAME, SANDBOX_CONFIG, LOCAL_SKILLS_DIR, SANDBOX_SKILLS_ROOT
 from sandbox.custom_opensandbox import OpenSandboxBackend
-from sandbox.opensandbox_opt import get_or_create_sandbox, sync_skills_to_sandbox
+from sandbox.sandbox_manager import SandboxManager
+from sandbox.opensandbox_opt import sync_skills_to_sandbox
 from tools.my_tools import web_search, upload_to_qiniu
 
 sandbox_backend = None
+sandbox_manager = None
 
 
 async def crete():
-    # 获取或创建OpenSandbox沙箱（优先连接已有沙箱，失败则新建）
-    # 可通过 sandbox_id 参数指定已运行的沙箱，避免重复创建
-    sandbox = get_or_create_sandbox(SANDBOX_CONFIG, sandbox_id="a284ce2d-a82d-4554-817c-5fbd40ee0cab")
+    global sandbox_manager
+
+    # 使用沙箱管理器获取沙箱（自动复用旧沙箱，失败则创建新的）
+    sandbox_manager = SandboxManager(
+        config=SANDBOX_CONFIG,
+        state_file=".sandbox_state.json",
+        heartbeat_interval=240,  # 心跳间隔 4 分钟
+    )
+    sandbox = sandbox_manager.get_sandbox()
 
     # 创建OpenSandbox后端，用于文件上传、命令执行等操作
     sandbox_backend = OpenSandboxBackend(sandbox=sandbox)

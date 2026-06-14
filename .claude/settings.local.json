@@ -1,7 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "PowerShell(& \"E:\\\\code\\\\every_agent\\\\.venv\\\\Scripts\\\\pip.exe\" list | findstr agent)"
-    ]
-  }
-}

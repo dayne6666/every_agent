@@ -31,11 +31,20 @@ ENV/
 *.swp
 *.swo
 
+# Claude Code
+.claude/settings.local.json
+
+# Claude Code
+.claude/settings.local.json
+
 # Environment variables
 .env
 
 # LangGraph
 .langgraph_api/
+
+# Sandbox State
+.sandbox_state.json
 
 # OS
 .DS_Store
