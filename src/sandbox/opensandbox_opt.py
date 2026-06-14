@@ -1,3 +1,4 @@
+import hashlib
 import os
 from datetime import timedelta
 from typing import Optional
@@ -76,148 +77,187 @@ def verify_sandbox(sandbox: SandboxSync) -> bool:
         return False
 
 
+def _file_md5(filepath: str) -> str:
+    """计算文件的 MD5 哈希值"""
+    h = hashlib.md5()
+    with open(filepath, "rb") as f:
+        for chunk in iter(lambda: f.read(8192), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _calc_local_skill_hash(local_skills_path: str, skill_name: str) -> str:
+    """
+    计算本地技能目录的综合哈希值（所有文件内容 MD5 + 相对路径拼接）。
+    任何文件内容或数量变化都会导致哈希值不同。
+    """
+    skill_dir = os.path.join(local_skills_path, skill_name)
+    file_hashes = []
+    for root, dirs, files in os.walk(skill_dir):
+        dirs[:] = [d for d in dirs if not d.startswith('.')]  # 跳过隐藏目录
+        for fname in sorted(files):
+            if fname.startswith('.'):
+                continue
+            full_path = os.path.join(root, fname)
+            rel_path = os.path.relpath(full_path, skill_dir).replace(os.sep, '/')
+            file_hashes.append(f"{rel_path}:{_file_md5(full_path)}")
+    combined = "|".join(file_hashes)
+    return hashlib.md5(combined.encode()).hexdigest() if combined else ""
+
+
+def _calc_sandbox_skill_hash(backend, sandbox_skills_path: str, skill_name: str) -> str:
+    """
+    计算沙箱中技能目录的综合哈希值。
+    在沙箱中执行脚本，对每个文件计算 MD5 后汇总。
+    """
+    skill_dir = f"{sandbox_skills_path}/{skill_name}"
+    script = (
+        f"find {skill_dir} -type f ! -name '.*' | sort | "
+        f"xargs -I{{}} sh -c 'echo $(basename {{}}):$(md5sum {{}} | cut -d\" \" -f1)'"
+    )
+    result = backend.execute(script)
+    output = _extract_output(result)
+    if not output:
+        return ""
+    return hashlib.md5(output.strip().encode()).hexdigest()
+
+
+def _extract_output(result) -> str:
+    """从执行结果中提取输出文本"""
+    if hasattr(result, 'stdout') and result.stdout:
+        return result.stdout
+    if hasattr(result, 'output') and result.output:
+        return result.output
+    if hasattr(result, 'result') and result.result:
+        return result.result
+    if isinstance(result, str):
+        return result
+    return str(result) if result else ""
+
+
+def _upload_skill(backend, local_skills_path: str, sandbox_skills_path: str, skill_name: str):
+    """上传单个技能目录到沙箱"""
+    skill_local_path = os.path.join(local_skills_path, skill_name)
+    skill_sandbox_path = f"{sandbox_skills_path}/{skill_name}"
+
+    # 先删除沙箱中旧版本
+    backend.execute(f"rm -rf {skill_sandbox_path}")
+
+    for root, dirs, files in os.walk(skill_local_path):
+        rel_path = os.path.relpath(root, skill_local_path)
+        if rel_path == ".":
+            sandbox_dir = skill_sandbox_path
+        else:
+            sandbox_dir = f"{skill_sandbox_path}/{rel_path.replace(os.sep, '/')}"
+
+        if rel_path != ".":
+            backend.execute(f"mkdir -p {sandbox_dir}")
+
+        for file in files:
+            local_file = os.path.join(root, file)
+            if rel_path == ".":
+                sandbox_file = f"{skill_sandbox_path}/{file}"
+            else:
+                sandbox_file = f"{skill_sandbox_path}/{rel_path.replace(os.sep, '/')}/{file}"
+
+            try:
+                with open(local_file, 'rb') as f:
+                    content = f.read()
+                backend.upload_files([(sandbox_file, content)])
+                print(f"  ✓ {file}")
+            except Exception as e:
+                print(f"  ✗ {file}: {e}")
+
+
 def sync_skills_to_sandbox(backend, local_skills_path, sandbox_skills_path):
     """
-    智能同步技能目录到沙箱
-    只上传沙箱中不存在的技能目录
+    基于内容哈希的智能同步：比较本地和沙箱的文件内容，只更新有变化的技能。
+
+    对比逻辑：
+    1. 计算本地每个技能的文件内容哈希
+    2. 计算沙箱中每个技能的文件内容哈希
+    3. 哈希不同 → 重新上传
+    4. 本地有沙箱没有 → 上传
+    5. 沙箱有本地没有 → 删除
 
     Args:
-        backend: OpenSandbox后端实例
+        backend: OpenSandbox 后端实例
         local_skills_path: 本地技能目录路径
         sandbox_skills_path: 沙箱中技能目录路径
+
+    Returns:
+        int: 上传（更新）的技能数量
     """
-    print(f"[DEBUG] 开始同步技能: 本地目录: {local_skills_path}")
-    print(f"[DEBUG] 目标沙箱目录: {sandbox_skills_path}")
+    print(f"[SYNC] 开始同步技能...")
+    print(f"  本地: {local_skills_path}")
+    print(f"  沙箱: {sandbox_skills_path}")
 
     # 1. 确保沙箱技能目录存在
-    print(f"[DEBUG] 确保沙箱技能目录存在")
-    result = backend.execute(f"mkdir -p {sandbox_skills_path}")
-    if hasattr(result, 'exit_code') and result.exit_code != 0:
-        print(f"[WARNING] 创建沙箱目录失败: {result}")
+    backend.execute(f"mkdir -p {sandbox_skills_path}")
 
-    # 2. 获取沙箱中已存在的技能目录
-    print(f"[DEBUG] 检查沙箱中已存在的技能目录...")
-
-    # 方法1: 尝试使用ls命令
-    list_cmd = f"ls -1 {sandbox_skills_path}/ 2>/dev/null || true"
-    result = backend.execute(list_cmd)
-
-    # 调试：打印结果
-    print(f"[DEBUG] ls命令结果: {result}")
-    print(f"[DEBUG] 结果类型: {type(result)}")
-
-    # 检查结果对象的属性
-    if hasattr(result, '__dict__'):
-        print(f"[DEBUG] 结果对象属性: {result.__dict__}")
-
-    existing_skills = set()
-
-    # 尝试从结果中提取输出
-    if hasattr(result, 'stdout'):
-        output = result.stdout
-    elif hasattr(result, 'output'):
-        output = result.output
-    elif hasattr(result, 'result'):
-        output = result.result
-    elif isinstance(result, str):
-        output = result
-    else:
-        # 如果是对象，尝试转换为字符串
-        output = str(result)
-
-    print(f"[DEBUG] 提取的输出: {output}")
-
-    if output:
-        # 按行分割，过滤掉空行和隐藏文件
-        lines = output.strip().split('\n')
-        for line in lines:
-            line = line.strip()
-            if line and not line.startswith('.'):
-                # 检查是否是目录（通过检查结尾是否有斜杠）
-                if line.endswith('/'):
-                    line = line[:-1]
-                existing_skills.add(line)
-
-    print(f"[DEBUG] 沙箱中已存在的技能: {existing_skills}")
-
-    # 3. 获取本地技能目录
-    local_skills = set()
+    # 2. 获取本地技能列表及哈希
+    local_skills = {}
     if os.path.exists(local_skills_path):
         for item in os.listdir(local_skills_path):
             item_path = os.path.join(local_skills_path, item)
-            if os.path.isdir(item_path):
-                local_skills.add(item)
+            if os.path.isdir(item_path) and not item.startswith('.'):
+                local_skills[item] = _calc_local_skill_hash(local_skills_path, item)
 
-    print(f"[DEBUG] 本地技能目录: {local_skills}")
+    # 3. 获取沙箱技能列表及哈希
+    result = backend.execute(f"ls -1 {sandbox_skills_path}/ 2>/dev/null || true")
+    output = _extract_output(result)
+    sandbox_skill_names = set()
+    if output:
+        for line in output.strip().split('\n'):
+            name = line.strip().rstrip('/')
+            if name and not name.startswith('.'):
+                sandbox_skill_names.add(name)
 
-    # 4. 计算需要上传的技能（本地有但沙箱中没有的）
-    skills_to_upload = local_skills - existing_skills
-    print(f"[DEBUG] 需要上传的技能: {skills_to_upload}")
+    sandbox_hashes = {}
+    for name in sandbox_skill_names:
+        sandbox_hashes[name] = _calc_sandbox_skill_hash(backend, sandbox_skills_path, name)
 
-    # 5. 上传缺失的技能
-    uploaded_count = 0
-    for skill_name in skills_to_upload:
-        skill_local_path = os.path.join(local_skills_path, skill_name)
-        skill_sandbox_path = f"{sandbox_skills_path}/{skill_name}"
+    # 4. 对比并同步
+    uploaded = 0
+    skipped = 0
+    deleted = 0
 
-        print(f"[DEBUG] 上传技能: {skill_name}")
-        print(f"  本地路径: {skill_local_path}")
-        print(f"  沙箱路径: {skill_sandbox_path}")
+    all_skills = set(local_skills.keys()) | sandbox_skill_names
 
-        # 递归复制整个技能目录
-        for root, dirs, files in os.walk(skill_local_path):
-            # 计算相对路径
-            rel_path = os.path.relpath(root, skill_local_path)
-            if rel_path == ".":
-                sandbox_dir = skill_sandbox_path
-            else:
-                sandbox_dir = f"{skill_sandbox_path}/{rel_path.replace(os.sep, '/')}"
+    for skill_name in all_skills:
+        local_hash = local_skills.get(skill_name)
+        sandbox_hash = sandbox_hashes.get(skill_name)
 
-            # 在沙箱中创建目录
-            if rel_path != ".":  # 主目录已创建
-                result = backend.execute(f"mkdir -p {sandbox_dir}")
-                if hasattr(result, 'exit_code') and result.exit_code != 0:
-                    print(f"[WARNING] 创建目录失败: {sandbox_dir}")
+        if local_hash is None:
+            # 本地已删除，沙箱中保留 → 删除沙箱中的
+            print(f"[SYNC] 🗑️  删除（本地已移除）: {skill_name}")
+            backend.execute(f"rm -rf {sandbox_skills_path}/{skill_name}")
+            deleted += 1
 
-            # 复制文件
-            for file in files:
-                local_file = os.path.join(root, file)
-                if rel_path == ".":
-                    sandbox_file = f"{skill_sandbox_path}/{file}"
-                else:
-                    sandbox_file = f"{skill_sandbox_path}/{rel_path.replace(os.sep, '/')}/{file}"
+        elif sandbox_hash is None:
+            # 沙箱中不存在 → 新增上传
+            print(f"[SYNC] ➕ 新增: {skill_name}")
+            _upload_skill(backend, local_skills_path, sandbox_skills_path, skill_name)
+            uploaded += 1
 
-                # 读取本地文件内容
-                try:
-                    with open(local_file, 'r', encoding='utf-8') as f:
-                        content = f.read()
+        elif local_hash != sandbox_hash:
+            # 内容有变化 → 更新
+            print(f"[SYNC] 🔄 更新: {skill_name}")
+            _upload_skill(backend, local_skills_path, sandbox_skills_path, skill_name)
+            uploaded += 1
 
-                    # 上传到沙箱
-                    result = backend.upload_files([(sandbox_file, content.encode("utf-8"))])
-                    if result:
-                        print(f"  ✓ 上传文件: {file}")
-                    else:
-                        print(f"  ✗ 上传文件失败: {file}")
-
-                except Exception as e:
-                    print(f"[ERROR] 读取/上传文件 {local_file} 失败: {e}")
-
-        uploaded_count += 1
-        print(f"[DEBUG] 完成上传技能: {skill_name}\n")
-
-    # 6. 验证上传结果
-    if uploaded_count > 0:
-        print(f"[DEBUG] 验证上传结果...")
-        result = backend.execute(f"ls -la {sandbox_skills_path}")
-        if hasattr(result, 'stdout'):
-            print(f"[DEBUG] 沙箱技能目录内容:\n{result.stdout if result.stdout else '空'}")
         else:
-            print(f"[DEBUG] 沙箱技能目录内容: {result}")
+            # 内容相同 → 跳过
+            skipped += 1
 
-    print(f"[DEBUG] 技能同步完成。上传了 {uploaded_count}/{len(skills_to_upload)} 个技能")
+    # 5. 汇总
+    total = uploaded + skipped + deleted
+    if total == 0:
+        print(f"[SYNC] 没有发现任何技能")
+    else:
+        print(f"[SYNC] 同步完成: 上传/更新 {uploaded} / 跳过 {skipped} / 删除 {deleted}")
 
-    # 返回上传的技能数量
-    return uploaded_count
+    return uploaded
 
 
 # 配置连接
