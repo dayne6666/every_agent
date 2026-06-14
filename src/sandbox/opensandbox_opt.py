@@ -105,21 +105,26 @@ def _calc_local_skill_hash(local_skills_path: str, skill_name: str) -> str:
     return hashlib.md5(combined.encode()).hexdigest() if combined else ""
 
 
-def _calc_sandbox_skill_hash(backend, sandbox_skills_path: str, skill_name: str) -> str:
-    """
-    计算沙箱中技能目录的综合哈希值。
-    在沙箱中执行脚本，对每个文件计算 MD5 后汇总。
-    """
-    skill_dir = f"{sandbox_skills_path}/{skill_name}"
-    script = (
-        f"find {skill_dir} -type f ! -name '.*' | sort | "
-        f"xargs -I{{}} sh -c 'echo $(basename {{}}):$(md5sum {{}} | cut -d\" \" -f1)'"
-    )
-    result = backend.execute(script)
+def _load_sandbox_hashes(backend, sandbox_skills_path: str) -> dict:
+    """从沙箱中读取上次同步时保存的哈希记录"""
+    hash_file = f"{sandbox_skills_path}/.skill_hashes.json"
+    result = backend.execute(f"cat {hash_file} 2>/dev/null || echo '{{}}'")
     output = _extract_output(result)
     if not output:
-        return ""
-    return hashlib.md5(output.strip().encode()).hexdigest()
+        return {}
+    try:
+        import json
+        return json.loads(output.strip())
+    except Exception:
+        return {}
+
+
+def _save_sandbox_hashes(backend, sandbox_skills_path: str, hashes: dict):
+    """将哈希记录保存到沙箱"""
+    import json
+    hash_file = f"{sandbox_skills_path}/.skill_hashes.json"
+    content = json.dumps(hashes, indent=2, ensure_ascii=False)
+    backend.upload_files([(hash_file, content.encode("utf-8"))])
 
 
 def _extract_output(result) -> str:
@@ -173,9 +178,12 @@ def sync_skills_to_sandbox(backend, local_skills_path, sandbox_skills_path):
     """
     基于内容哈希的智能同步：比较本地和沙箱的文件内容，只更新有变化的技能。
 
+    实现方式：在沙箱中维护 .skill_hashes.json 记录上次同步的哈希值，
+    本次同步时对比本地计算的哈希与记录的哈希，不同则更新。
+
     对比逻辑：
     1. 计算本地每个技能的文件内容哈希
-    2. 计算沙箱中每个技能的文件内容哈希
+    2. 读取沙箱中记录的上次同步哈希
     3. 哈希不同 → 重新上传
     4. 本地有沙箱没有 → 上传
     5. 沙箱有本地没有 → 删除
@@ -203,46 +211,35 @@ def sync_skills_to_sandbox(backend, local_skills_path, sandbox_skills_path):
             if os.path.isdir(item_path) and not item.startswith('.'):
                 local_skills[item] = _calc_local_skill_hash(local_skills_path, item)
 
-    # 3. 获取沙箱技能列表及哈希
-    result = backend.execute(f"ls -1 {sandbox_skills_path}/ 2>/dev/null || true")
-    output = _extract_output(result)
-    sandbox_skill_names = set()
-    if output:
-        for line in output.strip().split('\n'):
-            name = line.strip().rstrip('/')
-            if name and not name.startswith('.'):
-                sandbox_skill_names.add(name)
-
-    sandbox_hashes = {}
-    for name in sandbox_skill_names:
-        sandbox_hashes[name] = _calc_sandbox_skill_hash(backend, sandbox_skills_path, name)
+    # 3. 读取沙箱中上次保存的哈希记录（不再在沙箱内计算哈希）
+    saved_hashes = _load_sandbox_hashes(backend, sandbox_skills_path)
 
     # 4. 对比并同步
     uploaded = 0
     skipped = 0
     deleted = 0
 
-    all_skills = set(local_skills.keys()) | sandbox_skill_names
+    all_skills = set(local_skills.keys()) | set(saved_hashes.keys())
 
     for skill_name in all_skills:
         local_hash = local_skills.get(skill_name)
-        sandbox_hash = sandbox_hashes.get(skill_name)
+        saved_hash = saved_hashes.get(skill_name)
 
         if local_hash is None:
-            # 本地已删除，沙箱中保留 → 删除沙箱中的
-            print(f"[SYNC] 🗑️  删除（本地已移除）: {skill_name}")
+            # 本地已删除 → 删除沙箱中的
+            print(f"[SYNC] 删除（本地已移除）: {skill_name}")
             backend.execute(f"rm -rf {sandbox_skills_path}/{skill_name}")
             deleted += 1
 
-        elif sandbox_hash is None:
-            # 沙箱中不存在 → 新增上传
-            print(f"[SYNC] ➕ 新增: {skill_name}")
+        elif saved_hash is None:
+            # 新技能 → 上传
+            print(f"[SYNC] 新增: {skill_name}")
             _upload_skill(backend, local_skills_path, sandbox_skills_path, skill_name)
             uploaded += 1
 
-        elif local_hash != sandbox_hash:
+        elif local_hash != saved_hash:
             # 内容有变化 → 更新
-            print(f"[SYNC] 🔄 更新: {skill_name}")
+            print(f"[SYNC] 更新: {skill_name}")
             _upload_skill(backend, local_skills_path, sandbox_skills_path, skill_name)
             uploaded += 1
 
@@ -250,7 +247,11 @@ def sync_skills_to_sandbox(backend, local_skills_path, sandbox_skills_path):
             # 内容相同 → 跳过
             skipped += 1
 
-    # 5. 汇总
+    # 5. 保存本次同步的哈希记录到沙箱
+    if local_skills:
+        _save_sandbox_hashes(backend, sandbox_skills_path, local_skills)
+
+    # 6. 汇总
     total = uploaded + skipped + deleted
     if total == 0:
         print(f"[SYNC] 没有发现任何技能")
