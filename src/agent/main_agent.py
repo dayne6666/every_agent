@@ -2,7 +2,8 @@ import asyncio
 
 from deepagents import create_deep_agent
 
-from agent.memory.prompts import system_prompt
+from agent.memory.prompts import get_default_system_prompt
+from common.apollo_config import init_apollo, get_system_prompt
 from common.config import llm_xiaomi, AGENTS_MD_FILENAME, SANDBOX_CONFIG, LOCAL_SKILLS_DIR, SANDBOX_SKILLS_ROOT, \
     LOCAL_AGENTS_MD
 from sandbox.custom_opensandbox import OpenSandboxBackend
@@ -48,9 +49,15 @@ async def crete():
     else:
         print("✅ 所有技能已存在于沙箱中，无需上传")
 
+    # 初始化 Apollo 配置中心
+    init_apollo(agent_state.sandbox_backend)
+
+    # 从 Apollo 获取系统提示词（降级到本地默认值）
+    system_prompt = get_system_prompt()
+
     return create_deep_agent(  # create_agent
         model=llm_xiaomi,
-        memory=[AGENTS_MD_FILENAME],  # 由MemoryMiddleware加载, 主Agent的系统提示词
+        # memory=[AGENTS_MD_FILENAME],  # 由MemoryMiddleware加载, 主Agent的系统提示词
         tools=[web_search, upload_to_qiniu],
         skills=["/skills/main/"],
         backend=agent_state.sandbox_backend,

@@ -3,9 +3,11 @@
 
 此提示词作为 create_deep_agent(system_prompt=...) 的参数传入。
 详细的完整行为准则见 /memories/AGENTS.md（通过 memory 参数加载）。
+支持从 Apollo 配置中心动态获取，降级时使用本地默认值。
 """
 
-system_prompt = """
+# 本地默认系统提示词（Apollo 不可用时的降级值）
+DEFAULT_SYSTEM_PROMPT = """
 你是 ERP 采购智能助手，负责协调专业的子 Agent 完成采购任务。
 
 ## 你的角色
@@ -31,3 +33,8 @@ system_prompt = """
 ## 详细规则
 完整的行为准则、委派模板、记忆格式、安全边界见 `/AGENTS.md`，你必须始终遵守。
 """
+
+
+def get_default_system_prompt() -> str:
+    """获取本地默认系统提示词"""
+    return DEFAULT_SYSTEM_PROMPT
