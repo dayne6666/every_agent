@@ -3,6 +3,7 @@ import asyncio
 from deepagents import create_deep_agent
 
 from agent.memory.prompts import get_default_system_prompt
+from agent.middleware import DynamicSystemPromptMiddleware
 from common.apollo_config import init_apollo, get_system_prompt
 from common.config import llm_xiaomi, AGENTS_MD_FILENAME, SANDBOX_CONFIG, LOCAL_SKILLS_DIR, SANDBOX_SKILLS_ROOT, \
     LOCAL_AGENTS_MD
@@ -52,8 +53,8 @@ async def crete():
     # 初始化 Apollo 配置中心
     init_apollo(agent_state.sandbox_backend)
 
-    # 从 Apollo 获取系统提示词（降级到本地默认值）
-    system_prompt = get_system_prompt()
+    # 创建系统提示词动态 Middleware（每次对话时自动获取最新配置）
+    dynamic_prompt_middleware = DynamicSystemPromptMiddleware(enabled=True)
 
     return create_deep_agent(  # create_agent
         model=llm_xiaomi,
@@ -61,7 +62,8 @@ async def crete():
         tools=[web_search, upload_to_qiniu],
         skills=["/skills/main/"],
         backend=agent_state.sandbox_backend,
-        system_prompt=system_prompt,
+        middleware=[dynamic_prompt_middleware],  # 添加系统提示词动态 Middleware
+        # system_prompt=system_prompt,  # 不再需要，由 Middleware 动态注入
     )
 
 

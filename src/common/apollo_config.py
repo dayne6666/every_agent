@@ -18,10 +18,10 @@ from typing import Optional
 
 from common.env_utils import APOLLO_META_SERVER, APOLLO_APP_ID
 
-# 全局缓存
-_system_prompt_cache: Optional[str] = None
+# 全局变量
 _apollo_client = None
 _sandbox_backend = None
+_last_apollo_prompt = None  # 上一次成功获取的 Apollo 配置
 
 
 def init_apollo(sandbox_backend=None):
@@ -63,57 +63,59 @@ def init_apollo(sandbox_backend=None):
 
 
 def _reload_config():
-    """重新加载配置"""
-    global _system_prompt_cache
+    """
+    重新加载配置（由 Apollo SDK 轮询触发）
 
+    当 Apollo 检测到配置变更时，自动调用此函数
+    SDK 内部会自动更新内存缓存，我们只需打印日志
+    """
     if _apollo_client is None:
         return
 
     try:
-        _system_prompt_cache = _apollo_client.get_value("system_prompt")
         version = _apollo_client.get_value("prompt_version")
-        print(f"[Apollo] 已加载配置，版本: {version}")
+        print(f"[Apollo] 🔄 配置已更新，版本: {version}")
     except Exception as e:
-        print(f"[Apollo] 加载配置失败: {e}")
+        print(f"[Apollo] ❌ 加载配置失败: {e}")
 
 
 def get_system_prompt() -> str:
     """
     获取系统提示词
 
-    优先级：Apollo 配置 > 本地默认值
+    优先级：Apollo SDK 缓存 > 本地 Apollo 缓存 > 本地默认值
+
+    降级策略：
+    1. 优先从 Apollo SDK 获取（内存缓存，毫秒级）
+    2. 如果 SDK 不可用或报错，使用上一次成功获取的 Apollo 配置
+    3. 如果都没有，降级到本地默认值
+
+    这样确保 Apollo 临时故障时，Agent 行为保持稳定，不会突然变化。
 
     Returns:
         系统提示词字符串
     """
-    global _system_prompt_cache
+    global _last_apollo_prompt
 
-    print("[Apollo] 正在获取 system_prompt...")
-
-    # 如果 Apollo 客户端已初始化，直接从客户端获取（自动获取最新值）
+    # 1. 优先从 Apollo SDK 获取
     if _apollo_client:
         try:
             value = _apollo_client.get_value("system_prompt")
             if value:
-                _system_prompt_cache = value
-                # 打印前 100 个字符作为日志
-                preview = value[:100].replace('\n', ' ')
-                print(f"[Apollo] ✅ 成功从 Apollo 获取 system_prompt")
-                print(f"[Apollo] 内容预览: {preview}...")
+                # 成功获取，更新本地缓存
+                _last_apollo_prompt = value
                 return value
             else:
                 print("[Apollo] ⚠️ Apollo 返回的 system_prompt 为空")
         except Exception as e:
-            print(f"[Apollo] ❌ 获取 system_prompt 失败: {e}")
-    else:
-        print("[Apollo] ⚠️ Apollo 客户端未初始化")
+            print(f"[Apollo] ⚠️ 获取 system_prompt 失败: {e}，使用上一次的配置")
 
-    # 如果缓存有值，直接返回
-    if _system_prompt_cache:
-        print("[Apollo] 使用缓存的 system_prompt")
-        return _system_prompt_cache
+    # 2. 降级到上一次成功获取的 Apollo 配置
+    if _last_apollo_prompt:
+        print("[Apollo] 🔄 使用上一次成功的 Apollo 配置")
+        return _last_apollo_prompt
 
-    # 降级到本地默认值
+    # 3. 最终降级到本地默认值
     print("[Apollo] ⬇️ 降级使用本地默认 system_prompt")
     from agent.memory.prompts import get_default_system_prompt
     return get_default_system_prompt()
@@ -148,7 +150,6 @@ def get_apollo_status() -> dict:
         "initialized": _apollo_client is not None,
         "app_id": APOLLO_APP_ID,
         "meta_server": APOLLO_META_SERVER,
-        "cache_valid": _system_prompt_cache is not None,
         "hot_reload": True,
         "cycle_time": 30,
     }
