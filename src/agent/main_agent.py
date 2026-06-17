@@ -39,11 +39,11 @@ async def crete():
     # 智能同步技能到沙箱
     uploaded_count = sync_skills_to_sandbox(agent_state.sandbox_backend, local_skills_path, sandbox_skills_path)
 
-    with open(str(LOCAL_AGENTS_MD), 'r', encoding='utf-8') as f:
-        content = f.read()
-
-    # 上传到沙箱
-    result = agent_state.sandbox_backend.upload_files([(AGENTS_MD_FILENAME, content.encode("utf-8"))])
+    # with open(str(LOCAL_AGENTS_MD), 'r', encoding='utf-8') as f:
+    #     content = f.read()
+    #
+    # # 上传到沙箱
+    # result = agent_state.sandbox_backend.upload_files([(AGENTS_MD_FILENAME, content.encode("utf-8"))])
 
     if uploaded_count > 0:
         print(f"✅ 成功上传了 {uploaded_count} 个新技能到沙箱")
