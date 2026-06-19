@@ -1,9 +1,0 @@
-{
-  "mcpServers": {
-    "12306-mcp": {
-      "transport": "streamable_http",
-      "url": "https://mcp.api-inference.modelscope.net/4f119aa797b440/mcp"
-    }
-  },
-  "toolNamePrefix": true
-}

@@ -22,6 +22,7 @@ from common.env_utils import APOLLO_META_SERVER, APOLLO_APP_ID
 _apollo_client = None
 _sandbox_backend = None
 _last_apollo_prompt = None  # 上一次成功获取的 Apollo 配置
+_last_mcp_config = None  # 上一次成功获取的 MCP 配置
 
 
 def init_apollo(sandbox_backend=None):
@@ -119,6 +120,53 @@ def get_system_prompt() -> str:
     print("[Apollo] ⬇️ 降级使用本地默认 system_prompt")
     from agent.memory.prompts import get_default_system_prompt
     return get_default_system_prompt()
+
+
+def get_mcp_servers_config() -> dict:
+    """
+    获取 MCP 服务器配置
+
+    优先级：Apollo SDK 缓存 > 本地缓存
+
+    Apollo 中的 key 为 mcp_servers_config，值为 JSON 字符串：
+    {
+        "mcpServers": {
+            "server-name": {
+                "transport": "streamable_http" | "stdio" | "sse" | "websocket",
+                "url": "...",
+                ...
+            }
+        },
+        "toolNamePrefix": true
+    }
+
+    Returns:
+        MCP 配置字典
+    """
+    global _last_mcp_config
+
+    # 1. 优先从 Apollo SDK 获取
+    if _apollo_client:
+        try:
+            value = _apollo_client.get_value("mcp_servers_config")
+            if value:
+                import json
+                config = json.loads(value)
+                _last_mcp_config = config
+                return config
+            else:
+                print("[Apollo] ⚠️ Apollo 返回的 mcp_servers_config 为空")
+        except Exception as e:
+            print(f"[Apollo] ⚠️ 获取 mcp_servers_config 失败: {e}，使用上一次的配置")
+
+    # 2. 降级到上一次成功获取的 Apollo 配置
+    if _last_mcp_config:
+        print("[Apollo] 🔄 使用上一次成功的 MCP 配置")
+        return _last_mcp_config
+
+    # 3. 无可用配置
+    print("[Apollo] ⚠️ 无可用 MCP 配置，跳过 MCP 工具加载")
+    return {"mcpServers": {}, "toolNamePrefix": True}
 
 
 def refresh_config():
