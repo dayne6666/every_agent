@@ -11,6 +11,7 @@ from sandbox.custom_opensandbox import OpenSandboxBackend
 from sandbox.sandbox_manager import SandboxManager
 from sandbox.opensandbox_opt import sync_skills_to_sandbox
 from tools.my_tools import web_search, upload_to_qiniu
+from tools.mcp_tools import get_mcp_tools
 from agent.agent_state import sandbox_backend as _sb, sandbox_manager as _sm
 
 sandbox_backend = _sb
@@ -56,10 +57,14 @@ async def crete():
     # 创建系统提示词动态 Middleware（每次对话时自动获取最新配置）
     dynamic_prompt_middleware = DynamicSystemPromptMiddleware(enabled=True)
 
+    # 加载 MCP 工具（从配置文件读取 MCP Server 定义并连接）
+    mcp_tools = await get_mcp_tools()
+    all_tools = [web_search, upload_to_qiniu] + mcp_tools
+
     return create_deep_agent(  # create_agent
         model=llm_xiaomi,
         # memory=[AGENTS_MD_FILENAME],  # 由MemoryMiddleware加载, 主Agent的系统提示词
-        tools=[web_search, upload_to_qiniu],
+        tools=all_tools,
         skills=["/skills/main/"],
         backend=agent_state.sandbox_backend,
         middleware=[dynamic_prompt_middleware],  # 添加系统提示词动态 Middleware
