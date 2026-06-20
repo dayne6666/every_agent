@@ -2,16 +2,16 @@ import asyncio
 
 from deepagents import create_deep_agent
 
-from agent.memory.prompts import get_default_system_prompt
 from agent.middleware import DynamicSystemPromptMiddleware
-from common.apollo_config import init_apollo, get_system_prompt
+from agent.middleware.mcp_tools_middleware import MCPToolsMiddleware
+from common.apollo_config import init_apollo
 from common.config import llm_xiaomi, AGENTS_MD_FILENAME, SANDBOX_CONFIG, LOCAL_SKILLS_DIR, SANDBOX_SKILLS_ROOT, \
     LOCAL_AGENTS_MD
 from sandbox.custom_opensandbox import OpenSandboxBackend
 from sandbox.sandbox_manager import SandboxManager
 from sandbox.opensandbox_opt import sync_skills_to_sandbox
 from tools.my_tools import web_search, upload_to_qiniu
-from tools.mcp_tools import get_mcp_tools
+from tools import mcp_tools_registry
 from agent.agent_state import sandbox_backend as _sb, sandbox_manager as _sm
 
 sandbox_backend = _sb
@@ -57,17 +57,20 @@ async def crete():
     # 创建系统提示词动态 Middleware（每次对话时自动获取最新配置）
     dynamic_prompt_middleware = DynamicSystemPromptMiddleware(enabled=True)
 
-    # 加载 MCP 工具（从配置文件读取 MCP Server 定义并连接）
-    mcp_tools = await get_mcp_tools()
-    all_tools = [web_search, upload_to_qiniu] + mcp_tools
+    # 初始化 MCP 工具注册表（从 Apollo 加载 MCP Server 配置并连接）
+    await mcp_tools_registry.load_tools()
+
+    # 创建 MCP 工具动态 Middleware（热更新由 Apollo SDK 内置轮询驱动）
+    static_tools = [web_search, upload_to_qiniu]
+    mcp_middleware = MCPToolsMiddleware(static_tools=static_tools)
 
     return create_deep_agent(  # create_agent
         model=llm_xiaomi,
         # memory=[AGENTS_MD_FILENAME],  # 由MemoryMiddleware加载, 主Agent的系统提示词
-        tools=all_tools,
+        tools=static_tools,  # 静态工具传入 ToolNode，MCP 工具由 Middleware 动态注入
         skills=["/skills/main/"],
         backend=agent_state.sandbox_backend,
-        middleware=[dynamic_prompt_middleware],  # 添加系统提示词动态 Middleware
+        middleware=[dynamic_prompt_middleware, mcp_middleware],  # 系统提示词 + MCP 工具动态 Middleware
         # system_prompt=system_prompt,  # 不再需要，由 Middleware 动态注入
     )
 

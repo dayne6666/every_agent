@@ -109,10 +109,10 @@ class DynamicSystemPromptMiddleware(AgentMiddleware[AgentState, ContextT, Respon
 
             # 如果获取到了 Apollo 配置，**替换**到 system message
             if apollo_prompt:
-                # 记录日志（仅当配置变更时）
-                if apollo_prompt != self._last_prompt:
+                # 记录日志（仅当配置真正变更时，首次加载不打印）
+                if self._last_prompt is not None and apollo_prompt != self._last_prompt:
                     logger.info("[DynamicSystemPrompt] 检测到 system_prompt 变更，已替换")
-                    self._last_prompt = apollo_prompt
+                self._last_prompt = apollo_prompt
 
                 # ⚠️ **替换** system message（不是追加）
                 new_system_message = replace_system_message(

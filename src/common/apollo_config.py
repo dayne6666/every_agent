@@ -13,16 +13,19 @@ Apollo 配置中心客户端
 - 支持故障容灾：自动切换可用节点
 """
 
-import os
-from typing import Optional
+import hashlib
+import json
 
 from common.env_utils import APOLLO_META_SERVER, APOLLO_APP_ID
+from agent.memory.prompts import get_default_system_prompt
 
 # 全局变量
 _apollo_client = None
 _sandbox_backend = None
 _last_apollo_prompt = None  # 上一次成功获取的 Apollo 配置
 _last_mcp_config = None  # 上一次成功获取的 MCP 配置
+_mcp_config_hash = ""  # 当前 MCP 配置哈希，用于变更检测
+_mcp_reload_pending = False  # 标记：Apollo 检测到 MCP 配置变更，需要重载
 
 
 def init_apollo(sandbox_backend=None):
@@ -46,8 +49,11 @@ def init_apollo(sandbox_backend=None):
             # cycle_time=30,  # 可选：配置刷新周期（秒），默认 30
         )
 
-        # 初始化缓存
-        _reload_config()
+        # 记录当前 MCP 配置哈希，避免轮询时误报为变更
+        _init_mcp_hash()
+
+        # Hook 进 Apollo SDK 轮询：每次缓存更新时触发 MCP 变更检测
+        _hook_apollo_polling(_apollo_client)
 
         print(f"[Apollo] 已初始化，AppID: {APOLLO_APP_ID}")
         print(f"[Apollo] 热更新已启用，轮询周期: 30 秒")
@@ -67,17 +73,69 @@ def _reload_config():
     """
     重新加载配置（由 Apollo SDK 轮询触发）
 
-    当 Apollo 检测到配置变更时，自动调用此函数
-    SDK 内部会自动更新内存缓存，我们只需打印日志
+    当 Apollo 检测到配置变更时，自动调用此函数。
+    检测 MCP 配置变更并触发异步重载。
     """
+    global _mcp_config_hash, _mcp_reload_pending
+
     if _apollo_client is None:
         return
 
+    # 检测 MCP 配置是否变更
     try:
-        version = _apollo_client.get_value("prompt_version")
-        print(f"[Apollo] 🔄 配置已更新，版本: {version}")
+        mcp_value = _apollo_client.get_value("mcp_servers_config")
+        if mcp_value:
+            new_hash = hashlib.md5(mcp_value.encode()).hexdigest()
+            if new_hash != _mcp_config_hash:
+                _mcp_config_hash = new_hash
+                _mcp_reload_pending = True
+                print("[Apollo] 🔄 检测到 MCP 配置变更，将在下次调用时重载")
     except Exception as e:
-        print(f"[Apollo] ❌ 加载配置失败: {e}")
+        print(f"[Apollo] ❌ 检测 MCP 配置变更失败: {e}")
+
+
+def _init_mcp_hash():
+    """初始化 MCP 配置哈希，避免首次轮询误报为变更"""
+    global _mcp_config_hash
+    if _apollo_client is None:
+        return
+    try:
+        mcp_value = _apollo_client.get_value("mcp_servers_config")
+        if mcp_value:
+            _mcp_config_hash = hashlib.md5(mcp_value.encode()).hexdigest()
+    except Exception:
+        pass
+
+
+def _hook_apollo_polling(client):
+    """
+    Hook 进 Apollo SDK 的轮询机制。
+
+    pyapollo SDK 的轮询线程每 30 秒调用 update_cache() 更新缓存，
+    但不会通知外部代码。通过 monkey-patch update_cache，
+    在每次缓存更新后触发 MCP 配置变更检测。
+    """
+    original_update_cache = client.update_cache
+
+    def patched_update_cache(namespace, data):
+        original_update_cache(namespace, data)
+        # 缓存更新后，检测 MCP 配置是否变更
+        _reload_config()
+
+    client.update_cache = patched_update_cache
+
+
+def consume_mcp_reload_pending() -> bool:
+    """
+    消费 MCP 重载标记。
+
+    由 Middleware 在 async 上下文中调用，检测并消费 _mcp_reload_pending 标记。
+    """
+    global _mcp_reload_pending
+    if _mcp_reload_pending:
+        _mcp_reload_pending = False
+        return True
+    return False
 
 
 def get_system_prompt() -> str:
@@ -118,7 +176,6 @@ def get_system_prompt() -> str:
 
     # 3. 最终降级到本地默认值
     print("[Apollo] ⬇️ 降级使用本地默认 system_prompt")
-    from agent.memory.prompts import get_default_system_prompt
     return get_default_system_prompt()
 
 
@@ -150,7 +207,6 @@ def get_mcp_servers_config() -> dict:
         try:
             value = _apollo_client.get_value("mcp_servers_config")
             if value:
-                import json
                 config = json.loads(value)
                 _last_mcp_config = config
                 return config
